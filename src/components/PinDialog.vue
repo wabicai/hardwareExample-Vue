@@ -5,6 +5,11 @@
         <h3>Enter PIN</h3>
       </div>
       <div class="dialog-body">
+        <div class="info-text">
+          <p>The keypad layout matches your OneKey device.</p>
+          <p><strong>Note:</strong> Only Classic devices support PIN entry on computer.</p>
+        </div>
+        
         <!-- PIN Display (shows dots for entered numbers) -->
         <div class="pin-display">{{ pinDisplay }}</div>
         
@@ -20,6 +25,17 @@
           </button>
         </div>
         
+        <div class="pin-info">
+          <div class="pin-layout">
+            <div>7 8 9</div>
+            <div>4 5 6</div>
+            <div>1 2 3</div>
+          </div>
+          <div class="pin-description">
+            PIN layout on device
+          </div>
+        </div>
+        
         <div class="dialog-actions">
           <button class="action-btn" @click="clearPin">Clear</button>
           <button class="action-btn confirm-btn" @click="confirmPin" :disabled="!pin.length">Confirm</button>
@@ -30,8 +46,10 @@
   </div>
 </template>
 
-<script>
-export default {
+<script lang="ts">
+import { defineComponent, ref, computed } from 'vue';
+
+export default defineComponent({
   name: 'PinDialog',
   props: {
     isVisible: {
@@ -39,37 +57,47 @@ export default {
       default: false
     }
   },
-  data() {
-    return {
-      pin: '',
-      // The keyboard map that matches OneKey device PIN layout
-      keyboardMap: ['7', '8', '9', '4', '5', '6', '1', '2', '3']
-    }
-  },
-  computed: {
-    pinDisplay() {
-      return '•'.repeat(this.pin.length);
-    }
-  },
-  methods: {
-    addPinDigit(digit) {
-      this.pin += digit;
-    },
-    clearPin() {
-      this.pin = '';
-    },
-    confirmPin() {
-      if (this.pin.length > 0) {
-        this.$emit('pin-entered', this.pin);
-        this.pin = '';
+  emits: ['pin-entered'],
+  setup(props, { emit }) {
+    const pin = ref('');
+    // The keyboard map that matches OneKey device PIN layout
+    const keyboardMap = ['7', '8', '9', '4', '5', '6', '1', '2', '3'];
+    
+    const pinDisplay = computed(() => {
+      return '•'.repeat(pin.value.length);
+    });
+    
+    const addPinDigit = (digit: string) => {
+      pin.value += digit;
+    };
+    
+    const clearPin = () => {
+      pin.value = '';
+    };
+    
+    const confirmPin = () => {
+      if (pin.value.length > 0) {
+        emit('pin-entered', pin.value);
+        pin.value = '';
       }
-    },
-    useDeviceInput() {
-      this.$emit('pin-entered', '');
-      this.pin = '';
-    }
+    };
+    
+    const useDeviceInput = () => {
+      emit('pin-entered', '');
+      pin.value = '';
+    };
+    
+    return {
+      pin,
+      keyboardMap,
+      pinDisplay,
+      addPinDigit,
+      clearPin,
+      confirmPin,
+      useDeviceInput
+    };
   }
-}
+});
 </script>
 
 <style scoped>
@@ -110,6 +138,16 @@ export default {
   padding: 20px;
 }
 
+.info-text {
+  margin-bottom: 15px;
+  color: #666;
+  font-size: 14px;
+}
+
+.info-text p {
+  margin: 5px 0;
+}
+
 .pin-display {
   background-color: #f4f4f4;
   border: 1px solid #ddd;
@@ -148,6 +186,28 @@ export default {
 
 .pin-key:active {
   background-color: #d0d0d0;
+}
+
+.pin-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 20px;
+  background-color: #f8f8f8;
+  padding: 10px;
+  border-radius: 5px;
+}
+
+.pin-layout {
+  font-family: monospace;
+  font-size: 14px;
+  margin-bottom: 5px;
+  color: #666;
+}
+
+.pin-description {
+  font-size: 12px;
+  color: #999;
 }
 
 .dialog-actions {

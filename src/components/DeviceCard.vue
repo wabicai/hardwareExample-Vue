@@ -11,20 +11,24 @@
   </div>
 </template>
 
-<script>
-export default {
+<script lang="ts">
+import { defineComponent, PropType } from 'vue';
+import { DeviceInfo } from '@/types/hardware';
+
+export default defineComponent({
   name: 'DeviceCard',
   props: {
     device: {
-      type: Object,
+      type: Object as PropType<DeviceInfo>,
       required: true
     },
     isSelected: {
       type: Boolean,
       default: false
     }
-  }
-}
+  },
+  emits: ['select-device']
+});
 </script>
 
 <style scoped>

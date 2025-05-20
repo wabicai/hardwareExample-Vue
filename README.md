@@ -15,7 +15,7 @@ This is a Vue 3 demo application that demonstrates how to integrate with OneKey 
 
 ## Prerequisites
 
-- Node.js (v14 or higher)
+- Node.js (v16 or higher)
 - npm or yarn
 - OneKey hardware wallet
 

@@ -73,7 +73,8 @@
   </div>
 </template>
 
-<script>
+<script lang="ts">
+import { defineComponent, ref, reactive, onMounted } from 'vue';
 import DeviceCard from '@/components/DeviceCard.vue';
 import StatusMessage from '@/components/StatusMessage.vue';
 import PinDialog from '@/components/PinDialog.vue';
@@ -89,10 +90,13 @@ import {
   evmGetAddress,
   checkFirmwareRelease,
   checkBLEFirmwareRelease,
+  getPassphraseState,
   UI_REQUEST
 } from '@/services/hardwareService';
+import { DeviceInfo, UIEventMessage, StatusMessage as StatusMessageType } from '@/types/hardware';
+import type { IDeviceType } from '@onekeyfe/hd-core';
 
-export default {
+export default defineComponent({
   name: 'HomeView',
   components: {
     DeviceCard,
@@ -101,254 +105,362 @@ export default {
     PassphraseDialog,
     ButtonConfirmDialog
   },
-  data() {
-    return {
-      devices: [],
-      selectedDevice: null,
-      isSearching: false,
-      hasSearched: false,
-      statusMessage: {
-        text: '',
-        type: 'info'
-      },
-      result: null,
-      
-      // Dialog states
-      showPinDialog: false,
-      showPassphraseDialog: false,
-      showButtonConfirmDialog: false,
-      buttonConfirmMessage: ''
+  setup() {
+    // 状态
+    const devices = ref<DeviceInfo[]>([]);
+    const selectedDevice = ref<DeviceInfo | null>(null);
+    const deviceType = ref<IDeviceType>('unknown');
+    const isSearching = ref(false);
+    const hasSearched = ref(false);
+    const statusMessage = reactive<StatusMessageType>({
+      text: '',
+      type: 'info'
+    });
+    const result = ref<any>(null);
+    
+    // Passphrase 状态
+    const passphraseState = ref<string | null>(null);
+    
+    // Dialog states
+    const showPinDialog = ref(false);
+    const showPassphraseDialog = ref(false);
+    const showButtonConfirmDialog = ref(false);
+    const buttonConfirmMessage = ref('');
+
+    // 初始化
+    onMounted(async () => {
+      try {
+        await initializeSDK();
+        setStatus('SDK initialized successfully', 'success');
+        
+        // Setup event listeners
+        setupEventListeners(
+          handlePinRequest,
+          handlePassphraseRequest,
+          handleButtonRequest,
+          handleCloseUI
+        );
+      } catch (error: any) {
+        setStatus(`Failed to initialize SDK: ${error.message}`, 'error');
+      }
+    });
+
+    // 设置状态消息
+    const setStatus = (text: string, type: 'info' | 'success' | 'error' | 'warning' = 'info') => {
+      statusMessage.text = text;
+      statusMessage.type = type;
+      console.log(`[${type.toUpperCase()}] ${text}`);
     };
-  },
-  async mounted() {
-    try {
-      await initializeSDK();
-      this.setStatus('SDK initialized successfully', 'success');
-      
-      // Setup event listeners
-      setupEventListeners(
-        this.handlePinRequest,
-        this.handlePassphraseRequest,
-        this.handleButtonRequest,
-        this.handleCloseUI
-      );
-    } catch (error) {
-      this.setStatus(`Failed to initialize SDK: ${error.message}`, 'error');
-    }
-  },
-  methods: {
-    // Device management
-    async searchDevices() {
-      this.isSearching = true;
-      this.devices = [];
-      this.setStatus('Searching for devices...', 'info');
+
+    // 搜索设备
+    const searchDevicesAction = async () => {
+      isSearching.value = true;
+      devices.value = [];
+      setStatus('Searching for devices...', 'info');
       
       try {
         const result = await searchDevices();
-        this.hasSearched = true;
+        hasSearched.value = true;
         
         if (result && result.success && result.payload) {
-          this.devices = result.payload.map(device => ({
+          devices.value = result.payload.map((device: any) => ({
             id: device.connectId,
             name: device.name || device.deviceType || 'OneKey Device',
             deviceType: device.deviceType || 'unknown'
           }));
           
-          this.setStatus(
-            this.devices.length > 0 
-              ? `Found ${this.devices.length} devices` 
+          setStatus(
+            devices.value.length > 0 
+              ? `Found ${devices.value.length} devices` 
               : 'No devices found',
-            this.devices.length > 0 ? 'success' : 'info'
+            devices.value.length > 0 ? 'success' : 'info'
           );
         } else {
-          this.setStatus('No devices found or search failed', 'warning');
+          setStatus('No devices found or search failed', 'warning');
         }
-      } catch (error) {
-        this.setStatus(`Error searching devices: ${error.message}`, 'error');
+      } catch (error: any) {
+        setStatus(`Error searching devices: ${error.message}`, 'error');
       } finally {
-        this.isSearching = false;
+        isSearching.value = false;
       }
-    },
+    };
     
-    selectDevice(device) {
-      this.selectedDevice = device;
-      this.setStatus(`Selected device: ${device.name || device.id}`, 'success');
-    },
+    // 选择设备
+    const selectDevice = (device: DeviceInfo) => {
+      selectedDevice.value = device;
+      setStatus(`Selected device: ${device.name || device.id}`, 'success');
+      
+      // 获取设备类型
+      deviceType.value = (device.deviceType as IDeviceType) || 'unknown';
+      console.log('Device type:', deviceType.value);
+      
+      // 获取 passphrase 状态
+      checkPassphraseState();
+    };
     
-    // UI event handlers
-    handlePinRequest(message) {
+    // 检查 passphrase 状态
+    const checkPassphraseState = async () => {
+      if (!selectedDevice.value) return;
+      
+      try {
+        const result = await getPassphraseState(selectedDevice.value.id);
+        if (result && result.success) {
+          passphraseState.value = result.payload;
+          console.log('Passphrase state:', passphraseState.value);
+          
+          if (passphraseState.value) {
+            setStatus('Device has passphrase enabled', 'info');
+          }
+        }
+      } catch (error: any) {
+        console.error('Error checking passphrase state:', error);
+      }
+    };
+    
+    // UI 事件处理
+    const handlePinRequest = (message: UIEventMessage) => {
       console.log('PIN requested:', message);
-      this.showPinDialog = true;
-    },
+      
+      // 只有 Classic 设备支持在软件上输入 PIN
+      if (deviceType.value.toLowerCase() === 'classic') {
+        showPinDialog.value = true;
+      } else {
+        // Pro 和 Touch 设备只能在设备上输入 PIN
+        setStatus('Please enter PIN on your device', 'info');
+        submitPin(''); // 使用空字符串表示在设备上输入
+      }
+    };
     
-    handlePassphraseRequest(message) {
+    const handlePassphraseRequest = (message: UIEventMessage) => {
       console.log('Passphrase requested:', message);
-      this.showPassphraseDialog = true;
-    },
+      showPassphraseDialog.value = true;
+    };
     
-    handleButtonRequest(message) {
+    const handleButtonRequest = (message: UIEventMessage) => {
       console.log('Button confirmation requested:', message);
-      this.buttonConfirmMessage = message.payload?.message || 'Please confirm on your device';
-      this.showButtonConfirmDialog = true;
-    },
+      buttonConfirmMessage.value = message.payload?.message || 'Please confirm on your device';
+      showButtonConfirmDialog.value = true;
+    };
     
-    handleCloseUI() {
-      this.showPinDialog = false;
-      this.showPassphraseDialog = false;
-      this.showButtonConfirmDialog = false;
-    },
+    const handleCloseUI = () => {
+      showPinDialog.value = false;
+      showPassphraseDialog.value = false;
+      showButtonConfirmDialog.value = false;
+    };
     
-    // Dialog action handlers
-    handlePinEntered(pin) {
+    // 对话框动作处理
+    const handlePinEntered = (pin: string) => {
       console.log('PIN entered:', pin ? 'Custom PIN' : 'Use device PIN');
       submitPin(pin);
-      this.showPinDialog = false;
-    },
+      showPinDialog.value = false;
+    };
     
-    handlePassphraseEntered(passphraseData) {
+    interface PassphraseData {
+      value: string;
+      onDevice: boolean;
+      save: boolean;
+    }
+    
+    const handlePassphraseEntered = (passphraseData: PassphraseData) => {
       console.log('Passphrase entered:', passphraseData.onDevice ? 'On device' : 'Custom passphrase');
       submitPassphrase(passphraseData.value, passphraseData.onDevice, passphraseData.save);
-      this.showPassphraseDialog = false;
-    },
+      showPassphraseDialog.value = false;
+    };
     
-    handlePassphraseCancelled() {
+    const handlePassphraseCancelled = () => {
       console.log('Passphrase cancelled');
       submitPassphrase('', true, false); // Default to on-device entry
-      this.showPassphraseDialog = false;
-    },
+      showPassphraseDialog.value = false;
+    };
     
-    handleButtonConfirmAcknowledged() {
+    const handleButtonConfirmAcknowledged = () => {
       console.log('Button confirmation acknowledged');
-      this.showButtonConfirmDialog = false;
-    },
+      showButtonConfirmDialog.value = false;
+    };
     
-    // Device actions
-    async getFeatures() {
-      if (!this.selectedDevice) {
-        this.setStatus('No device selected', 'warning');
+    // 设备操作
+    const getFeatures = async () => {
+      if (!selectedDevice.value) {
+        setStatus('No device selected', 'warning');
         return;
       }
       
-      this.setStatus('Getting device features...', 'info');
+      setStatus('Getting device features...', 'info');
       try {
         const sdk = await initializeSDK();
-        const result = await sdk.getFeatures(this.selectedDevice.id);
-        this.result = result;
+        const callResult = await sdk.getFeatures(selectedDevice.value.id);
+        result.value = callResult;
         
-        if (result.success) {
-          this.setStatus('Successfully retrieved device features', 'success');
+        if (callResult.success) {
+          setStatus('Successfully retrieved device features', 'success');
         } else {
-          this.setStatus(`Failed to get features: ${result.payload?.error || 'Unknown error'}`, 'error');
+          setStatus(`Failed to get features: ${callResult.payload?.error || 'Unknown error'}`, 'error');
         }
-      } catch (error) {
-        this.setStatus(`Error getting features: ${error.message}`, 'error');
+      } catch (error: any) {
+        setStatus(`Error getting features: ${error.message}`, 'error');
       }
-    },
+    };
     
-    async getBTCAddress() {
-      if (!this.selectedDevice) {
-        this.setStatus('No device selected', 'warning');
+    const getBTCAddress = async () => {
+      if (!selectedDevice.value) {
+        setStatus('No device selected', 'warning');
         return;
       }
       
-      this.setStatus('Getting BTC address...', 'info');
+      setStatus('Getting BTC address...', 'info');
       try {
-        const result = await btcGetAddress(
-          this.selectedDevice.id, 
+        // 使用新的调用格式，符合 OneKey 文档标准
+        const callResult = await btcGetAddress(
+          selectedDevice.value.id, 
           '', // deviceId can be empty for web
-          "m/44'/0'/0'/0/0", // standard BTC path
-          true, // show on device 
-          true  // use empty passphrase
+          {
+            path: "m/44'/0'/0'/0/0", // standard BTC path
+            showOnOneKey: true, // show on device
+            passphraseState: passphraseState.value || undefined,
+            retryCount: 3, // 尝试3次连接
+            timeout: 60000, // 60秒超时
+            keepSession: true // 保持会话
+          }
         );
-        this.result = result;
+        result.value = callResult;
         
-        if (result.success) {
-          this.setStatus('Successfully retrieved BTC address', 'success');
+        if (callResult.success) {
+          setStatus('Successfully retrieved BTC address', 'success');
         } else {
-          this.setStatus(`Failed to get BTC address: ${result.payload?.error || 'Unknown error'}`, 'error');
+          setStatus(`Failed to get BTC address: ${callResult.payload?.error || 'Unknown error'}`, 'error');
         }
-      } catch (error) {
-        this.setStatus(`Error getting BTC address: ${error.message}`, 'error');
+      } catch (error: any) {
+        setStatus(`Error getting BTC address: ${error.message}`, 'error');
       }
-    },
+    };
     
-    async getEVMAddress() {
-      if (!this.selectedDevice) {
-        this.setStatus('No device selected', 'warning');
+    const getEVMAddress = async () => {
+      if (!selectedDevice.value) {
+        setStatus('No device selected', 'warning');
         return;
       }
       
-      this.setStatus('Getting ETH/EVM address...', 'info');
+      setStatus('Getting ETH/EVM address...', 'info');
       try {
-        const result = await evmGetAddress(
-          this.selectedDevice.id,
+        // 使用新的调用格式，符合 OneKey 文档标准
+        const callResult = await evmGetAddress(
+          selectedDevice.value.id,
           '', // deviceId can be empty for web
-          "m/44'/60'/0'/0/0", // standard ETH path
-          1,  // Ethereum mainnet chain ID
-          true, // show on device
-          true  // use empty passphrase
+          {
+            path: "m/44'/60'/0'/0/0", // standard ETH path
+            chainId: 1, // Ethereum mainnet chain ID
+            showOnOneKey: true, // show on device
+            passphraseState: passphraseState.value || undefined,
+            retryCount: 3,
+            timeout: 60000,
+            keepSession: true
+          }
         );
-        this.result = result;
+        result.value = callResult;
         
-        if (result.success) {
-          this.setStatus('Successfully retrieved ETH address', 'success');
+        if (callResult.success) {
+          setStatus('Successfully retrieved ETH address', 'success');
         } else {
-          this.setStatus(`Failed to get ETH address: ${result.payload?.error || 'Unknown error'}`, 'error');
+          setStatus(`Failed to get ETH address: ${callResult.payload?.error || 'Unknown error'}`, 'error');
         }
-      } catch (error) {
-        this.setStatus(`Error getting ETH address: ${error.message}`, 'error');
+      } catch (error: any) {
+        setStatus(`Error getting ETH address: ${error.message}`, 'error');
       }
-    },
+    };
     
-    async checkFirmwareRelease() {
-      if (!this.selectedDevice) {
-        this.setStatus('No device selected', 'warning');
+    const checkFirmwareReleaseAction = async () => {
+      if (!selectedDevice.value) {
+        setStatus('No device selected', 'warning');
         return;
       }
       
-      this.setStatus('Checking firmware release...', 'info');
+      setStatus('Checking firmware release...', 'info');
       try {
-        const result = await checkFirmwareRelease(this.selectedDevice.id, '');
-        this.result = result;
+        // 使用新的调用格式
+        const callResult = await checkFirmwareRelease(
+          selectedDevice.value.id, 
+          '',
+          {
+            timeout: 30000,
+            keepSession: false
+          }
+        );
+        result.value = callResult;
         
-        if (result.success) {
-          this.setStatus('Successfully checked firmware release', 'success');
+        if (callResult.success) {
+          setStatus('Successfully checked firmware release', 'success');
         } else {
-          this.setStatus(`Failed to check firmware: ${result.payload?.error || 'Unknown error'}`, 'error');
+          setStatus(`Failed to check firmware: ${callResult.payload?.error || 'Unknown error'}`, 'error');
         }
-      } catch (error) {
-        this.setStatus(`Error checking firmware: ${error.message}`, 'error');
+      } catch (error: any) {
+        setStatus(`Error checking firmware: ${error.message}`, 'error');
       }
-    },
+    };
     
-    async checkBLEFirmwareRelease() {
-      if (!this.selectedDevice) {
-        this.setStatus('No device selected', 'warning');
+    const checkBLEFirmwareReleaseAction = async () => {
+      if (!selectedDevice.value) {
+        setStatus('No device selected', 'warning');
         return;
       }
       
-      this.setStatus('Checking BLE firmware release...', 'info');
+      setStatus('Checking BLE firmware release...', 'info');
       try {
-        const result = await checkBLEFirmwareRelease(this.selectedDevice.id, '');
-        this.result = result;
+        // 使用新的调用格式
+        const callResult = await checkBLEFirmwareRelease(
+          selectedDevice.value.id, 
+          '',
+          {
+            timeout: 30000,
+            keepSession: false
+          }
+        );
+        result.value = callResult;
         
-        if (result.success) {
-          this.setStatus('Successfully checked BLE firmware release', 'success');
+        if (callResult.success) {
+          setStatus('Successfully checked BLE firmware release', 'success');
         } else {
-          this.setStatus(`Failed to check BLE firmware: ${result.payload?.error || 'Unknown error'}`, 'error');
+          setStatus(`Failed to check BLE firmware: ${callResult.payload?.error || 'Unknown error'}`, 'error');
         }
-      } catch (error) {
-        this.setStatus(`Error checking BLE firmware: ${error.message}`, 'error');
+      } catch (error: any) {
+        setStatus(`Error checking BLE firmware: ${error.message}`, 'error');
       }
-    },
-    
-    // Utility methods
-    setStatus(text, type = 'info') {
-      this.statusMessage = { text, type };
-      console.log(`[${type.toUpperCase()}] ${text}`);
-    }
+    };
+
+    return {
+      // 状态
+      devices,
+      selectedDevice,
+      deviceType,
+      isSearching,
+      hasSearched,
+      statusMessage,
+      result,
+      passphraseState,
+      showPinDialog,
+      showPassphraseDialog,
+      showButtonConfirmDialog,
+      buttonConfirmMessage,
+      
+      // 方法
+      searchDevices: searchDevicesAction,
+      selectDevice,
+      handlePinRequest,
+      handlePassphraseRequest,
+      handleButtonRequest,
+      handleCloseUI,
+      handlePinEntered,
+      handlePassphraseEntered,
+      handlePassphraseCancelled,
+      handleButtonConfirmAcknowledged,
+      getFeatures,
+      getBTCAddress,
+      getEVMAddress,
+      checkFirmwareRelease: checkFirmwareReleaseAction,
+      checkBLEFirmwareRelease: checkBLEFirmwareReleaseAction,
+      setStatus
+    };
   }
-};
+});
 </script>
 
 <style scoped>

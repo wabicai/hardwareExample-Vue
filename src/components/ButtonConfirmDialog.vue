@@ -17,15 +17,17 @@
           </div>
         </div>
         <div class="dialog-actions">
-          <button class="action-btn" @click="confirmAction">OK</button>
+          <button class="action-btn" @click="handleAcknowledge">OK</button>
         </div>
       </div>
     </div>
   </div>
 </template>
 
-<script>
-export default {
+<script lang="ts">
+import { defineComponent } from 'vue';
+
+export default defineComponent({
   name: 'ButtonConfirmDialog',
   props: {
     isVisible: {
@@ -37,12 +39,17 @@ export default {
       default: ''
     }
   },
-  methods: {
-    confirmAction() {
-      this.$emit('confirm-acknowledged');
-    }
+  emits: ['confirm-acknowledged'],
+  setup(props, { emit }) {
+    const handleAcknowledge = () => {
+      emit('confirm-acknowledged');
+    };
+
+    return {
+      handleAcknowledge
+    };
   }
-}
+});
 </script>
 
 <style scoped>

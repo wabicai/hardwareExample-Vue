@@ -29,7 +29,6 @@ export default defineConfig({
   },
   optimizeDeps: {
     esbuildOptions: {
-      // 启用内置Node.js模块的polyfill
       define: {
         global: "globalThis",
       },
